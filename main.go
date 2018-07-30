@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/streadway/amqp"
 )
@@ -66,7 +67,7 @@ func applySetting(x int, setting int) int {
 	return x + setting
 }
 
-func applySettingViaAPI(x int, setting int) int {
+func applySettingViaAPI(x int, setting int, c chan int) int {
 	endpoint := "http://localhost:8080/process"
 	requestURL := fmt.Sprintf("%s?number=%d&multiply-with=%d", endpoint, x, setting)
 	log.Printf("[applySettingViaApi] Going to call %s", requestURL)
@@ -74,6 +75,7 @@ func applySettingViaAPI(x int, setting int) int {
 	body, _ := ioutil.ReadAll(r.Body)
 	log.Printf("[applySettingViaApi] result is %s", string(body))
 	result, _ := strconv.Atoi(string(body))
+	c <- result
 	return result
 }
 
@@ -99,15 +101,27 @@ func main() {
 
 	go func(currentSetting *int) {
 		for {
+			resultChannel := make(chan int)
 			select {
 			case d := <-jobMsgs:
-				x, _ := strconv.Atoi(string(d.Body))
-				log.Printf("[Job] Incoming %d\n", x)
-				// fmt.Println(string(applySetting(x, setting)))
+				jobs := d.Body
+				log.Printf("[Job] Incoming %s\n", jobs)
+
 				setting := *currentSetting
-				result := applySettingViaAPI(x, setting)
-				prettyPrint(strconv.Itoa(result))
-				log.Printf("[Job] Result of x with setting is %d\n", result)
+				todoJob := strings.Split(string(jobs), ",")
+				for _, x := range todoJob {
+					log.Printf("[Job]  %s\n", x)
+					x, _ := strconv.Atoi(string(x))
+					go applySettingViaAPI(x, setting, resultChannel)
+				}
+
+				result := ""
+				for range todoJob {
+					jobResult := <-resultChannel
+					log.Printf("[Job] Result from channel is %d", jobResult)
+					result = result + string(<-resultChannel)
+				}
+				log.Printf("[Job] Result of job with setting is %s\n", result)
 				d.Ack(false)
 			case d := <-settingMsgs:
 				log.Printf("[Setting] Current is %d", *currentSetting)
