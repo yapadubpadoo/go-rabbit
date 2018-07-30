@@ -2,7 +2,10 @@ package main
 
 import (
 	"fmt"
+	"io/ioutil"
 	"log"
+	"net/http"
+	"strconv"
 
 	"github.com/streadway/amqp"
 )
@@ -12,10 +15,6 @@ func failOnError(err error, msg string) {
 		log.Fatalf("%s: %s", msg, err)
 		panic(fmt.Sprintf("%s: %s", msg, err))
 	}
-}
-
-func prettyPrint(s string) {
-	log.Printf("%s", s)
 }
 
 func getRabbit() (*amqp.Connection, *amqp.Channel) {
@@ -62,6 +61,26 @@ func consume(ch *amqp.Channel, qName string) <-chan amqp.Delivery {
 	return msgs
 }
 
+func applySetting(x int, setting int) int {
+	log.Printf("Apply %d with %d", x, setting)
+	return x + setting
+}
+
+func applySettingViaAPI(x int, setting int) int {
+	endpoint := "http://localhost:8080/process"
+	requestURL := fmt.Sprintf("%s?number=%d&multiply-with=%d", endpoint, x, setting)
+	log.Printf("[applySettingViaApi] Going to call %s", requestURL)
+	r, _ := http.Get(requestURL)
+	body, _ := ioutil.ReadAll(r.Body)
+	log.Printf("[applySettingViaApi] result is %s", string(body))
+	result, _ := strconv.Atoi(string(body))
+	return result
+}
+
+func prettyPrint(s string) {
+	log.Printf("[PrettyPrint] %s", s)
+}
+
 func main() {
 
 	conn, ch := getRabbit()
@@ -72,25 +91,34 @@ func main() {
 	jobQ := declareQueue(ch, "job_queue")
 	settingQ := declareQueue(ch, "setting_queue")
 
-	msgs := consume(ch, jobQ.Name)
-	msgs2 := consume(ch, settingQ.Name)
+	jobMsgs := consume(ch, jobQ.Name)
+	settingMsgs := consume(ch, settingQ.Name)
 
 	forever := make(chan bool)
+	currentSetting := 1
 
-	go func() {
+	go func(currentSetting *int) {
 		for {
 			select {
-			case d := <-msgs:
-				prettyPrint(string(d.Body))
+			case d := <-jobMsgs:
+				x, _ := strconv.Atoi(string(d.Body))
+				log.Printf("[Job] Incoming %d\n", x)
+				// fmt.Println(string(applySetting(x, setting)))
+				setting := *currentSetting
+				result := applySettingViaAPI(x, setting)
+				prettyPrint(strconv.Itoa(result))
+				log.Printf("[Job] Result of x with setting is %d\n", result)
 				d.Ack(false)
-			case d := <-msgs2:
-				prettyPrint(string(d.Body))
+			case d := <-settingMsgs:
+				log.Printf("[Setting] Current is %d", *currentSetting)
+				newSetting, _ := strconv.Atoi(string(d.Body))
+				*currentSetting = newSetting
+				log.Printf("[Setting] Change to %d\n", *currentSetting)
 				d.Ack(false)
+				log.Printf("[Setting] Done")
 			}
-			log.Printf("Done")
-
 		}
-	}()
+	}(&currentSetting)
 
 	log.Printf(" [*] Waiting for messages. To exit press CTRL+C")
 	<-forever

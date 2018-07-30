@@ -1,0 +1,12 @@
+version: '3'
+services:
+  rabbitmq:
+    image: rabbitmq:3.6-management
+    ports:
+      - 5630:5672
+      - 15015:15672
+    environment:
+      RABBITMQ_DEFAULT_USER: "tz"
+      RABBITMQ_DEFAULT_PASS: "tz!"
+      RABBITMQ_DEFAULT_VHOST: "/"
+    restart: on-failure
